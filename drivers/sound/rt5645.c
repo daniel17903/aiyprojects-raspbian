@@ -3186,8 +3186,13 @@ static int rt5645_jack_detect(struct snd_soc_component *component, int jack_inse
 		regmap_write(rt5645->regmap, RT5645_JD_CTRL3, 0x00f0);
 		regmap_update_bits(rt5645->regmap, RT5645_IN1_CTRL2,
 			RT5645_CBJ_MN_JD, RT5645_CBJ_MN_JD);
-		regmap_update_bits(rt5645->regmap, RT5645_IN1_CTRL1,
-			RT5645_CBJ_BST1_EN, RT5645_CBJ_BST1_EN);
+		// On the AIY voice bonnet, we do not wish to disable
+		// the IN1 port when the jack is connected.
+		if (rt5645->pdata.jd_mode != 0) {
+			regmap_update_bits(rt5645->regmap, RT5645_IN1_CTRL1,
+			                   RT5645_CBJ_BST1_EN, RT5645_CBJ_BST1_EN);
+		}
+
 		msleep(100);
 		regmap_update_bits(rt5645->regmap, RT5645_IN1_CTRL2,
 			RT5645_CBJ_MN_JD, 0);
@@ -3227,15 +3232,8 @@ static int rt5645_jack_detect(struct snd_soc_component *component, int jack_inse
 			RT5645_L_MUTE | RT5645_R_MUTE);
 		regmap_update_bits(rt5645->regmap, RT5645_IN1_CTRL2,
 			RT5645_CBJ_MN_JD, RT5645_CBJ_MN_JD);
-		//regmap_update_bits(rt5645->regmap, RT5645_IN1_CTRL1,
-		//	RT5645_CBJ_BST1_EN, 0);
-
-		// On the AIY voice bonnet, we do not wish to disable
-		// the IN1 port when the jack is connected.
-		if (rt5645->pdata.jd_mode != 0) {
-			regmap_update_bits(rt5645->regmap, RT5645_IN1_CTRL1,
-			                   RT5645_CBJ_BST1_EN, RT5645_CBJ_BST1_EN);
-		}
+		regmap_update_bits(rt5645->regmap, RT5645_IN1_CTRL1,
+			RT5645_CBJ_BST1_EN, 0);
 
 		if (rt5645->en_button_func)
 			rt5645_enable_push_button_irq(component, false);
