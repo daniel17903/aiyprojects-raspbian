@@ -3939,13 +3939,32 @@ static bool rt5645_check_dp(struct device *dev)
 	return false;
 }
 
-static void rt5645_parse_dt(struct device *dev, struct rt5645_platform_data *pdata)
+static int rt5645_parse_dt(struct rt5645_platform_data *rt5645, struct device *dev)
 {
-	pdata->in2_diff = device_property_read_bool(dev, "realtek,in2-differential");
-	device_property_read_u32(dev, "realtek,dmic1-data-pin", &pdata->dmic1_data_pin);
-	device_property_read_u32(dev, "realtek,dmic2-data-pin", &pdata->dmic2_data_pin);
-	device_property_read_u32(dev, "realtek,jd-mode", &pdata->jd_mode);
-	pdata->inv_jd1_1 = device_property_read_bool(dev, "realtek,jd-invert");
+	rt5645->in2_diff = device_property_read_bool(dev,
+		"realtek,in2-differential");
+	device_property_read_u32(dev,
+		"realtek,dmic1-data-pin", &rt5645->dmic1_data_pin);
+	device_property_read_u32(dev,
+		"realtek,dmic2-data-pin", &rt5645->dmic2_data_pin);
+	device_property_read_u32(dev,
+		"realtek,jd-mode", &rt5645->jd_mode);
+	rt5645->inv_jd1_1 = device_property_read_bool(dev, "realtek,jd-invert");
+	return 0;
+}
+
+static int rt5645_parse_dt_old(struct rt5645_priv *rt5645, struct device *dev)
+{
+	rt5645->pdata.in2_diff = device_property_read_bool(dev,
+		"realtek,in2-differential");
+	device_property_read_u32(dev,
+		"realtek,dmic1-data-pin", &rt5645->pdata.dmic1_data_pin);
+	device_property_read_u32(dev,
+		"realtek,dmic2-data-pin", &rt5645->pdata.dmic2_data_pin);
+	device_property_read_u32(dev,
+		"realtek,jd-mode", &rt5645->pdata.jd_mode);
+	rt5645->pdata.inv_jd1_1 = device_property_read_bool(dev, "realtek,jd-invert");
+	return 0;
 }
 
 static void rt5645_get_pdata(struct device *codec_dev, struct rt5645_platform_data *pdata)
@@ -3957,7 +3976,7 @@ static void rt5645_get_pdata(struct device *codec_dev, struct rt5645_platform_da
 		dev_info(codec_dev, "Detected %s platform\n", dmi_data->ident);
 		*pdata = *((struct rt5645_platform_data *)dmi_data->driver_data);
 	} else if (rt5645_check_dp(codec_dev)) {
-		rt5645_parse_dt(codec_dev, pdata);
+		rt5645_parse_dt(pdata, codec_dev);
 	} else {
 		*pdata = jd_mode3_platform_data;
 	}
@@ -4002,6 +4021,8 @@ EXPORT_SYMBOL_GPL(rt5645_components);
 
 static int rt5645_i2c_probe(struct i2c_client *i2c)
 {
+	struct rt5645_platform_data *pdata = dev_get_platdata(&i2c->dev);
+	const struct dmi_system_id *dmi_data;
 	struct rt5645_priv *rt5645;
 	int ret, i;
 	unsigned int val;
@@ -4014,17 +4035,27 @@ static int rt5645_i2c_probe(struct i2c_client *i2c)
 
 	rt5645->i2c = i2c;
 	i2c_set_clientdata(i2c, rt5645);
-	rt5645_get_pdata(&i2c->dev, &rt5645->pdata);
 
-	if (has_acpi_companion(&i2c->dev)) {
-		if (cht_rt5645_gpios) {
-			if (devm_acpi_dev_add_driver_gpios(&i2c->dev, cht_rt5645_gpios))
-				dev_dbg(&i2c->dev, "Failed to add driver gpios\n");
-		}
+	dmi_data = dmi_first_match(dmi_platform_data);
+	if (dmi_data) {
+		dev_info(&i2c->dev, "Detected %s platform\n", dmi_data->ident);
+		pdata = dmi_data->driver_data;
+	}
 
-		/* The ALC3270 package has the headset-mic pin not-connected */
-		if (acpi_dev_hid_uid_match(ACPI_COMPANION(&i2c->dev), "10EC3270", NULL))
-			rt5645->pdata.no_headset_mic = true;
+	if (pdata)
+		rt5645->pdata = *pdata;
+	else if (rt5645_check_dp(&i2c->dev))
+		rt5645_parse_dt_old(rt5645, &i2c->dev);
+	else
+		rt5645->pdata = jd_mode3_platform_data;
+
+	if (quirk != -1) {
+		rt5645->pdata.in2_diff = QUIRK_IN2_DIFF(quirk);
+		rt5645->pdata.level_trigger_irq = QUIRK_LEVEL_IRQ(quirk);
+		rt5645->pdata.inv_jd1_1 = QUIRK_INV_JD1_1(quirk);
+		rt5645->pdata.jd_mode = QUIRK_JD_MODE(quirk);
+		rt5645->pdata.dmic1_data_pin = QUIRK_DMIC1_DATA_PIN(quirk);
+		rt5645->pdata.dmic2_data_pin = QUIRK_DMIC2_DATA_PIN(quirk);
 	}
 
 	rt5645->gpiod_hp_det = devm_gpiod_get_optional(&i2c->dev, "hp-detect",
@@ -4037,16 +4068,6 @@ static int rt5645_i2c_probe(struct i2c_client *i2c)
 		 * Continue if optional gpiod is missing, bail for all other
 		 * errors, including -EPROBE_DEFER
 		 */
-		if (ret != -ENOENT)
-			return ret;
-	}
-
-	rt5645->gpiod_cbj_sleeve = devm_gpiod_get_optional(&i2c->dev, "cbj-sleeve",
-							   GPIOD_OUT_LOW);
-
-	if (IS_ERR(rt5645->gpiod_cbj_sleeve)) {
-		ret = PTR_ERR(rt5645->gpiod_cbj_sleeve);
-		dev_info(&i2c->dev, "failed to initialize gpiod, ret=%d\n", ret);
 		if (ret != -ENOENT)
 			return ret;
 	}
@@ -4074,7 +4095,7 @@ static int rt5645_i2c_probe(struct i2c_client *i2c)
 		ret = PTR_ERR(regmap);
 		dev_err(&i2c->dev, "Failed to allocate temp register map: %d\n",
 			ret);
-		goto err_enable;
+		return ret;
 	}
 
 	/*
@@ -4082,11 +4103,7 @@ static int rt5645_i2c_probe(struct i2c_client *i2c)
 	 * read and power On.
 	 */
 	msleep(TIME_TO_POWER_MS);
-	ret = regmap_read(regmap, RT5645_VENDOR_ID2, &val);
-	if (ret < 0) {
-		dev_err(&i2c->dev, "Failed to read: 0x%02X\n, ret = %d", RT5645_VENDOR_ID2, ret);
-		goto err_enable;
-	}
+	regmap_read(regmap, RT5645_VENDOR_ID2, &val);
 
 	switch (val) {
 	case RT5645_DEVICE_ID:
@@ -4109,7 +4126,7 @@ static int rt5645_i2c_probe(struct i2c_client *i2c)
 		ret = PTR_ERR(rt5645->regmap);
 		dev_err(&i2c->dev, "Failed to allocate register map: %d\n",
 			ret);
-		goto err_enable;
+		return ret;
 	}
 
 	regmap_write(rt5645->regmap, RT5645_RESET, 0);
@@ -4119,13 +4136,13 @@ static int rt5645_i2c_probe(struct i2c_client *i2c)
 
 	regmap_write(rt5645->regmap, RT5645_AD_DA_MIXER, 0x8080);
 
-	ret = regmap_multi_reg_write(rt5645->regmap, init_list,
+	ret = regmap_register_patch(rt5645->regmap, init_list,
 				    ARRAY_SIZE(init_list));
 	if (ret != 0)
 		dev_warn(&i2c->dev, "Failed to apply regmap patch: %d\n", ret);
 
 	if (rt5645->codec_type == CODEC_TYPE_RT5650) {
-		ret = regmap_multi_reg_write(rt5645->regmap, rt5650_init_list,
+		ret = regmap_register_patch(rt5645->regmap, rt5650_init_list,
 				    ARRAY_SIZE(rt5650_init_list));
 		if (ret != 0)
 			dev_warn(&i2c->dev, "Apply rt5650 patch failed: %d\n",
@@ -4253,7 +4270,6 @@ static int rt5645_i2c_probe(struct i2c_client *i2c)
 	}
 	timer_setup(&rt5645->btn_check_timer, rt5645_btn_check_callback, 0);
 
-	mutex_init(&rt5645->jd_mutex);
 	INIT_DELAYED_WORK(&rt5645->jack_detect_work, rt5645_jack_detect_work);
 	INIT_DELAYED_WORK(&rt5645->rcclock_work, rt5645_rcclock_work);
 
@@ -4262,7 +4278,7 @@ static int rt5645_i2c_probe(struct i2c_client *i2c)
 			IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING
 			| IRQF_ONESHOT, "rt5645", rt5645);
 		if (ret) {
-			dev_err(&i2c->dev, "Failed to request IRQ: %d\n", ret);
+			dev_err(&i2c->dev, "Failed to reguest IRQ: %d\n", ret);
 			goto err_enable;
 		}
 	}
