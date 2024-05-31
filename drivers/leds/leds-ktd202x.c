@@ -541,8 +541,7 @@ static struct attribute_group ktd202x_dev_attr_group = {
 	.attrs = ktd202x_dev_attrs,
 };
 
-static int ktd202x_probe(struct i2c_client *client,
-			const struct i2c_device_id *id)
+static int ktd202x_probe(struct i2c_client *client)
 {
 	struct device *dev = &client->dev;
 	struct ktd202x_context *ctx = NULL;
@@ -568,19 +567,17 @@ static int ktd202x_probe(struct i2c_client *client,
 	i2c_set_clientdata(client, ctx);
 	ktd202x_init(ctx);
 
-	dev_info(dev, "Driver loaded for a %s.\n", id->name);
+	dev_info(dev, "Driver loaded for a led.\n");
 
 	return 0;
 }
 
-static int ktd202x_remove(struct i2c_client *client)
+static void ktd202x_remove(struct i2c_client *client)
 {
 	struct ktd202x_context *ctx = i2c_get_clientdata(client);
 	ktd202x_reset(ctx);
 
 	sysfs_remove_group(&client->dev.kobj, &ktd202x_dev_attr_group);
-
-	return 0;
 }
 
 static const struct of_device_id ktd202x_of_match[] = {
